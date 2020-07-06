@@ -27,7 +27,7 @@ fn assert_self() {
 #[ext_contract(remote_self)]
 pub trait RemoteSelf {
     #[result_serializer(borsh)]
-    fn on_block_hash(&self, #[serializer(borsh)] expected_block_hash: H256) -> bool;
+    fn on_block_hash(&self, #[callback] #[serializer(borsh)] block_hash: Option<H256>, #[serializer(borsh)] expected_block_hash: H256) -> bool;
 }
 
 /// Defines an interface to call EthClient contract to get the safe block hash for a given block
@@ -105,7 +105,7 @@ impl EthProver {
             ))
             .into()
     }
-
+    
     #[result_serializer(borsh)]
     pub fn verify_log_entry(
         &self,
@@ -116,33 +116,70 @@ impl EthProver {
         #[serializer(borsh)] header_data: Vec<u8>,
         #[serializer(borsh)] proof: Vec<Vec<u8>>,
         #[serializer(borsh)] skip_bridge_call: bool,
-    ) -> bool {
+    ) -> PromiseOrValue<bool> {
+    // ) -> bool {
+    // ) -> Promise {
         let log_entry: LogEntry = rlp::decode(log_entry_data.as_slice()).unwrap();
         let receipt: Receipt = rlp::decode(receipt_data.as_slice()).unwrap();
         let header: BlockHeader = rlp::decode(header_data.as_slice()).unwrap();
 
-        // Verify block header was in the bridge
-        if !skip_bridge_call {
-            eth_client::block_hash_safe(header.number, &self.bridge_smart_contract, 0, 10000000000000).then(
-                remote_self::on_block_hash(
-                    header.hash.unwrap(),
-                    &env::current_account_id(),
-                    0,
-                    env::prepaid_gas()/2,
-                ),
-            );
-        }
+        eth_client::block_hash_safe(header.number, &self.bridge_smart_contract, 0, 10000000000000).then(
+            remote_self::on_block_hash(
+                header.hash.unwrap(),
+                &env::current_account_id(),
+                0,
+                env::prepaid_gas()/2,
+            ),
+        ).into()
 
-        // Verify log_entry included in receipt
-        assert_eq!(receipt.logs[log_index as usize], log_entry);
+        // // Verify block header was in the bridge
+        // if !skip_bridge_call {
+        //     eth_client::block_hash_safe(header.number, &self.bridge_smart_contract, 0, 10000000000000).then(
+        //         remote_self::on_block_hash(
+        //             header.hash.unwrap(),
+        //             &env::current_account_id(),
+        //             0,
+        //             env::prepaid_gas()/2,
+        //         ),
+        //     );
+        // }
+        //
+        // // Verify log_entry included in receipt
+        // assert_eq!(receipt.logs[log_index as usize], log_entry);
+        //
+        // // Verify receipt included into header
+        // Self::verify_trie_proof(
+        //     header.receipts_root,
+        //     rlp::encode(&receipt_index),
+        //     proof,
+        //     receipt_data,
+        // )
 
-        // Verify receipt included into header
-        Self::verify_trie_proof(
-            header.receipts_root,
-            rlp::encode(&receipt_index),
-            proof,
-            receipt_data,
-        )
+        // // Verify log_entry included in receipt
+        // assert_eq!(receipt.logs[log_index as usize], log_entry);
+        //
+        // // Verify receipt included into header
+        // let verification_result = Self::verify_trie_proof(
+        //     header.receipts_root,
+        //     rlp::encode(&receipt_index),
+        //     proof,
+        //     receipt_data,
+        // );
+        // if !verification_result {
+        //     return PromiseOrValue::Value(false);
+        // } else if skip_bridge_call {
+        //     return PromiseOrValue::Value(true);
+        // }
+        //
+        // // Verify block header was in the bridge
+        // eth_client::block_hash_safe(header.number, &self.bridge_smart_contract, 0, 10000000000000).then(
+        //     remote_self::on_block_hash(
+        //         header.hash.unwrap(),
+        //         &env::current_account_id(),
+        //         0,
+        //         env::prepaid_gas()/2,
+        //     ),
+        // ).into()
     }
 
     /// Iterate the proof following the key.

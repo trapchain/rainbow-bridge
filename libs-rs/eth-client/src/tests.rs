@@ -350,6 +350,7 @@ fn add_2_blocks_from_400000() {
     assert_eq!((hashes[1].0).0, (contract.block_hash(400_001).unwrap().0).0);
 }
 
+
 #[cfg(feature = "expensive_tests")]
 #[test]
 fn predumped_block_can_be_added() {

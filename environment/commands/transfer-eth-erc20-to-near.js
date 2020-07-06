@@ -14,6 +14,12 @@ const { RainbowConfig } = require('../lib/config');
 const {
     Eth2NearClientContract,
 } = require('../lib/eth2near-client-contract');
+const {
+    EthProverContract,
+    borshSchema,
+} = require('../lib/eth-prover-contract');
+
+const { serialize } = require('../lib/borsh');
 
 function sleep (ms) {
     return new Promise((resolve) => {
@@ -119,6 +125,28 @@ class TransferETHERC20ToNear {
                 const receipt_index = proof.txIndex;
                 const receipt_data = receiptFromWeb3(receipt).serialize();
                 const header_data = proof.header.serialize();
+                const blockNumber = block.number;
+                const alt_block_data = await web3.eth.getBlock(blockNumber);
+                const myheader = [
+                    alt_block_data.parentHash,
+                    alt_block_data.sha3Uncles,
+                    alt_block_data.miner,
+                    alt_block_data.stateRoot,
+                    alt_block_data.transactionsRoot,
+                    alt_block_data.receiptsRoot,
+                    alt_block_data.logsBloom,
+                    alt_block_data.difficulty == "0" ? "0x": web3.utils.toHex(alt_block_data.difficulty),
+                    web3.utils.toHex(alt_block_data.number),
+                    web3.utils.toHex(alt_block_data.gasLimit),
+                    web3.utils.toHex(alt_block_data.gasUsed),
+                    web3.utils.toHex(alt_block_data.timestamp),
+                    alt_block_data.extraData,
+                    alt_block_data.mixHash,
+                    alt_block_data.nonce,
+                ];
+                let myheader_hex = utils.rlp.encode(myheader).toString('hex');
+                console.log(`My header: ${myheader_hex}`);
+
                 const _proof = [];
                 for (const node of proof.receiptProof) {
                     _proof.push(utils.rlp.encode(node));
@@ -133,31 +161,50 @@ class TransferETHERC20ToNear {
                     proof: _proof,
                 };
 
+                const prover_args = {
+                    log_index: txLogIndex,
+                    log_entry_data: log_entry_data,
+                    receipt_index: receipt_index,
+                    receipt_data: receipt_data,
+                    header_data: header_data,
+                    proof: _proof,
+                    skip_bridge_call: false
+                };
+                const prover_borsh = serialize(borshSchema, 'verifyLogEntry', prover_args).toString('hex');
+                console.log(`PROOF: ${prover_borsh}`);
+
                 const new_owner_id = lockedEvent.returnValues.accountId;
                 const amount = lockedEvent.returnValues.amount;
                 console.log(`Transferring ${amount} tokens from ${lockedEvent.returnValues.token} ERC20. From ${lockedEvent.returnValues.sender} sender to ${new_owner_id} recipient`);
 
-                const blockNumber = block.number;
                 // Wait until client accepts this block number.
                 const clientAccount = RainbowConfig.getParam('eth2near-client-account');
                 const ethClientContract = new Eth2NearClientContract(nearMasterAccount, clientAccount);
                 while (true) {
                     // @ts-ignore
                     const last_block_number = (await ethClientContract.last_block_number()).toNumber();
-                    if (last_block_number < blockNumber) {
+                    const is_safe = await ethClientContract.block_hash_safe(blockNumber);
+                    if (!is_safe) {
                         const delay = 10;
-                        console.log(`Eth2NearClient is currently at block ${last_block_number}. Waiting for block ${blockNumber}. Sleeping for ${delay} sec.`);
+                        console.log(`Eth2NearClient is currently at block ${last_block_number}. Waiting for block ${blockNumber} to be confirmed. Sleeping for ${delay} sec.`);
                         await sleep(delay * 1000);
                     } else {
+                        const proverContract = new EthProverContract(nearMasterAccount, RainbowConfig.getParam('eth2near-prover-account'));
+                        await proverContract.accessKeyInit();
+                        const res = await proverContract.assert_ethclient_hash({
+                            block_number: blockNumber,
+                            expected_block_hash: is_safe
+                        });
+                        console.log(`res: ${res} (${blockNumber}, ${is_safe})`);
                         break;
                     }
                 }
 
-                // @ts-ignore
-                const old_balance = await nearTokenContract.get_balance({
-                    owner_id: new_owner_id,
-                });
-                console.log(`Balance of ${new_owner_id} before the transfer is ${old_balance}`);
+                // // @ts-ignore
+                // const old_balance = await nearTokenContract.get_balance({
+                //     owner_id: new_owner_id,
+                // });
+                // console.log(`Balance of ${new_owner_id} before the transfer is ${old_balance}`);
 
                 // @ts-ignore
                 await nearTokenContractBorsh.mint(

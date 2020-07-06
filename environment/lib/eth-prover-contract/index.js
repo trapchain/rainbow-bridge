@@ -11,7 +11,7 @@ const borshSchema = {
             ['bridge_smart_contract', 'string'],
         ],
     },
-    assertEthbridgeHashInput: {
+    assertEthClientHashInput: {
         kind: 'struct',
         fields: [
             ['block_number', 'u64'],
@@ -53,8 +53,8 @@ class EthProverContract extends BorshContract {
                 inputFieldType: 'initInput',
                 outputFieldType: null,
             }, {
-                methodName: 'assert_ethbridge_hash',
-                inputFieldType: 'assertEthbridgeHashInput',
+                methodName: 'assert_ethclient_hash',
+                inputFieldType: 'assertEthClientHashInput',
                 outputFieldType: 'bool',
             },
             ],

@@ -133,7 +133,7 @@ class Eth2NearClientContract extends BorshContract {
                 first_header: blockRlp,
                 hashes_gc_threshold: 40000,
                 finalized_gc_threshold: 500,
-                num_confirmations: 10,
+                num_confirmations: 3,
             }, new BN('300000000000000'));
             console.log('EthClient initialized');
         }
