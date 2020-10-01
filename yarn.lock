@@ -4027,10 +4027,10 @@ query-string@^5.0.1:
     object-assign "^4.1.0"
     strict-uri-encode "^1.0.0"
 
-rainbow-bridge-lib@1.0.2:
-  version "1.0.2"
-  resolved "https://registry.yarnpkg.com/rainbow-bridge-lib/-/rainbow-bridge-lib-1.0.2.tgz#9e8fea884d5266f8f0c120a2c022c1a89af43e00"
-  integrity sha512-w3zuZbREGEC753Y/u7tPbnFMynPlXgYTHV1iTuRiL8CqNHpCeKSkcxWjUaYdgCd+FovpgbbyoRT4rw+1RH9CYQ==
+rainbow-bridge-lib@1.0.7:
+  version "1.0.7"
+  resolved "https://registry.yarnpkg.com/rainbow-bridge-lib/-/rainbow-bridge-lib-1.0.7.tgz#f1ebad11a333120a5fa2a35cbaf843ae7712f946"
+  integrity sha512-HDsS1+ZmFhXwobtdb9LOxviBGRK4Qj1Xa9h6210ACSXpHtJE8VH+XmpSq9t0neJrFHZoBjMWrFHfSC1lIlUaLQ==
   dependencies:
     bn.js "^5.1.3"
     bs58 "^4.0.1"
@@ -4053,10 +4053,10 @@ rainbow-bridge-rs@1.0.2:
   resolved "https://registry.yarnpkg.com/rainbow-bridge-rs/-/rainbow-bridge-rs-1.0.2.tgz#824a9f3cb00f083cbf737d5dc7bc11b0682de27c"
   integrity sha512-8HHPwsDmTIvROzJPvbw6RJDKnge8xDAi9MBdCVuC1JdU51t6aFRHZBsORvdGd89yYQaz3hLm8jWzTZtYV2XOdA==
 
-rainbow-bridge-sol@1.1.0:
-  version "1.1.0"
-  resolved "https://registry.yarnpkg.com/rainbow-bridge-sol/-/rainbow-bridge-sol-1.1.0.tgz#5a6f8405391924a833560c3ab1fc2f8b86e716fa"
-  integrity sha512-r2eu6pwi837BjGUfWD+bnsmW+PKV+Ku1GVo9PT/puaQY6/Hx+N6h5thTaZSqILj2gguRubDbLQgTmw7H/LJeaw==
+rainbow-bridge-sol@1.1.5:
+  version "1.1.5"
+  resolved "https://registry.yarnpkg.com/rainbow-bridge-sol/-/rainbow-bridge-sol-1.1.5.tgz#a10206195241d01e8a255f9cb38c1399590fa0b9"
+  integrity sha512-TB7SrDt9temVtZsskPm8w6IgKSy5ozqGTEEIyw8h3+X7UqDk6lLEGN0VuhSO0cymmJ3mBNDqoREj18hNZiEGSw==
 
 randombytes@^2.0.0, randombytes@^2.0.1, randombytes@^2.0.5, randombytes@^2.1.0:
   version "2.1.0"
