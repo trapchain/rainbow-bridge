@@ -84,7 +84,7 @@ class TransferETHERC20ToNear {
       )
       console.log(transaction)
       const lockedEvent = transaction.events.Locked
-      console.log('Success tranfer to locker')
+      console.log('Success transfer to locker')
       TransferETHERC20ToNear.recordTransferLog({
         finished: 'lock',
         lockedEvent

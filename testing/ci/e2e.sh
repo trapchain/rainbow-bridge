@@ -1,5 +1,5 @@
 #!/bin/bash
-# This test launch all commands and tranfer tokens
+# This test launch all commands and transfer tokens
 
 set -exuo pipefail
 
