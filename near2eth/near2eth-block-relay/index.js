@@ -12,6 +12,7 @@ const {
   borshifyInitialValidators,
   nearAPI
 } = require('rainbow-bridge-utils')
+const { HttpPrometheus } = require('../../utils/http-prometheus.js')
 
 class Near2EthRelay {
   async initialize ({
@@ -21,7 +22,8 @@ class Near2EthRelay {
     ethMasterSk,
     ethClientAbiPath,
     ethClientAddress,
-    ethGasMultiplier
+    ethGasMultiplier,
+    metricsPort
   }) {
     // @ts-ignore
     this.robustWeb3 = new RobustWeb3(ethNodeUrl)
@@ -32,6 +34,7 @@ class Near2EthRelay {
     this.web3.eth.accounts.wallet.add(this.ethMasterAccount)
     this.web3.eth.defaultAccount = this.ethMasterAccount.address
     this.ethMasterAccount = this.ethMasterAccount.address
+    this.metricsPort = metricsPort
 
     const keyStore = new nearAPI.keyStores.InMemoryKeyStore()
     this.near = await nearAPI.connect({
@@ -162,6 +165,19 @@ class Near2EthRelay {
     }
   }
 
+  // TODO: Add cli command that allows withdraw funds from client.
+  async withdraw ({
+    ethGasMultiplier
+  }) {
+    const web3 = this.web3
+    await this.clientContract.methods.withdraw().send({
+      from: this.ethMasterAccount,
+      gas: 1000000,
+      handleRevert: true,
+      gasPrice: new BN(await web3.eth.getGasPrice()).mul(new BN(ethGasMultiplier))
+    })
+  }
+
   async runInternal ({
     submitInvalidBlock,
     near2ethRelayMinDelay,
@@ -178,6 +194,10 @@ class Near2EthRelay {
     const minDelay = Number(near2ethRelayMinDelay)
     const maxDelay = Number(near2ethRelayMaxDelay)
     const errorDelay = Number(near2ethRelayErrorDelay)
+
+    const httpPrometheus = new HttpPrometheus(this.metricsPort, 'near_bridge_near2eth_')
+    const clientHeightGauge = httpPrometheus.gauge('client_height', 'amount of block client processed')
+    const chainHeightGauge = httpPrometheus.gauge('chain_height', 'current chain height')
 
     while (true) {
       try {
@@ -237,17 +257,22 @@ class Near2EthRelay {
               console.log(borshBlock)
               borshBlock[Math.floor(borshBlock.length * Math.random())] += 1
             }
+
+            const gasPrice = new BN(await web3.eth.getGasPrice())
+            console.log('Gas price:', gasPrice.toNumber())
+
             await clientContract.methods.addLightClientBlock(borshBlock).send({
               from: ethMasterAccount,
-              gas: 4000000,
+              gas: 7000000,
               handleRevert: true,
-              gasPrice: new BN(await web3.eth.getGasPrice()).mul(new BN(ethGasMultiplier))
+              gasPrice: gasPrice.mul(new BN(ethGasMultiplier))
             })
 
             if (submitInvalidBlock) {
               console.log('Successfully submit invalid block')
               return process.exit(0)
             }
+
             console.log('Submitted.')
             continue
           }
@@ -266,9 +291,12 @@ class Near2EthRelay {
           )
         }
         delay = Math.max(delay, minDelay)
-        console.log(
-          `Client height is ${bridgeState.currentHeight}, chain height is ${lastBlock.inner_lite.height}. Sleeping for ${delay} seconds.`
-        )
+        clientHeightGauge.set(Number(BigInt(bridgeState.currentHeight)))
+        chainHeightGauge.set(Number(BigInt(lastBlock.inner_lite.height)))
+
+        const status = await this.near.connection.provider.sendJsonRpc('status', '')
+        console.log(`Last valid header on the client: ${bridgeState.currentHeight}. Next light client block: ${lastBlock.inner_lite.height}`)
+        console.log(`Chain height: ${status.sync_info.latest_block_height} Sleeping for ${delay} seconds.`)
         await sleep(1000 * delay)
       } catch (e) {
         console.log('Error', e)

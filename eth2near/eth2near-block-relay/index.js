@@ -1,20 +1,39 @@
 const path = require('path')
 const exec = require('child_process').exec
+const nearAPI = require('near-api-js')
 const BN = require('bn.js')
-const { RobustWeb3, sleep, txnStatus } = require('rainbow-bridge-utils')
-const { web3BlockToRlp, EthOnNearClientContract } = require('./eth-on-near-client')
-const { EthOnNearProverContract } = require('./eth-on-near-prover')
-const { EthProofExtractor, logFromWeb3, receiptFromWeb3, ethToNearFindProof } = require('./eth-proof-extractor')
+const { serialize } = require('../../utils/borsh')
+const {
+  RobustWeb3,
+  sleep
+} = require('rainbow-bridge-utils')
+const {
+  web3BlockToRlp,
+  EthOnNearClientContract,
+  borshSchema
+} = require('./eth-on-near-client')
+const {
+  EthOnNearProverContract
+} = require('./eth-on-near-prover')
+const {
+  EthProofExtractor,
+  logFromWeb3,
+  receiptFromWeb3,
+  ethToNearFindProof
+} = require('./eth-proof-extractor')
 
-// TODO: enable configuration
-const MAX_SUBMIT_BLOCK = 10
+const {
+  HttpPrometheus
+} = require('../../utils/http-prometheus.js')
+
 const BRIDGE_SRC_DIR = path.join(__dirname, '..', '..')
+const MAX_GAS_PER_BLOCK = '300000000000000'
 
 function ethashproof (command, _callback) {
   return new Promise((resolve) =>
     exec(command, (error, stdout, _stderr) => {
       if (error) {
-        console.log(error)
+        console.error(error)
       }
       resolve(stdout)
     })
@@ -22,15 +41,38 @@ function ethashproof (command, _callback) {
 }
 
 class Eth2NearRelay {
-  initialize (ethClientContract, { ethNodeUrl }) {
+  initialize (ethClientContract, {
+    ethNodeUrl,
+    totalSubmitBlock,
+    gasPerTransaction,
+    metricsPort
+  }) {
+    this.gasPerTransaction = new BN(gasPerTransaction)
+    const limitSubmitBlock = new BN(MAX_GAS_PER_BLOCK).div(this.gasPerTransaction).toNumber()
+    this.totalSubmitBlock = parseInt(totalSubmitBlock)
+    if (Number.isNaN(this.totalSubmitBlock)) {
+      throw new Error(`Invalid total-submit-block (${totalSubmitBlock})`)
+    }
+
+    if (this.totalSubmitBlock > limitSubmitBlock) {
+      throw new Error(`total-submit-block must be ${limitSubmitBlock} or less. Currently it is: ${this.totalSubmitBlock}`)
+    }
+
     this.ethClientContract = ethClientContract
     // @ts-ignore
     this.robustWeb3 = new RobustWeb3(ethNodeUrl)
     this.web3 = this.robustWeb3.web3
+    this.metricsPort = metricsPort
   }
 
   async run () {
     const robustWeb3 = this.robustWeb3
+    const httpPrometheus = new HttpPrometheus(this.metricsPort, 'near_bridge_eth2near_')
+
+    const clientBlockNumberGauge = httpPrometheus.gauge('client_block_number', 'current client block number')
+    const chainBlockNumberGauge = httpPrometheus.gauge('chain_block_number', 'current chain block number')
+    const errorsOnSubmitCounter = httpPrometheus.counter('errors_on_submit', 'number of errors while submitting header')
+
     while (true) {
       let clientBlockNumber
       let chainBlockNumber
@@ -40,11 +82,11 @@ class Eth2NearRelay {
         clientBlockNumber = (
           await this.ethClientContract.last_block_number()
         ).toNumber()
-        console.log('Client block number is ' + clientBlockNumber)
+        clientBlockNumberGauge.set(clientBlockNumber)
         chainBlockNumber = await robustWeb3.getBlockNumber()
-        console.log('Chain block number is ' + chainBlockNumber)
+        chainBlockNumberGauge.set(chainBlockNumber)
       } catch (e) {
-        console.log(e)
+        console.error(e)
         continue
       }
 
@@ -63,9 +105,10 @@ class Eth2NearRelay {
               `Block ${chainBlockHash} height: ${clientBlockNumber} is not known to the client. Backtracking.`
             )
             clientBlockNumber -= 1
+            clientBlockNumberGauge.set(clientBlockNumber)
           }
         } catch (e) {
-          console.log(e)
+          console.error(e)
           continue
         }
       }
@@ -75,7 +118,7 @@ class Eth2NearRelay {
           // Submit add_block txns
           const blockPromises = []
           let endBlock = Math.min(
-            clientBlockNumber + MAX_SUBMIT_BLOCK,
+            clientBlockNumber + this.totalSubmitBlock,
             chainBlockNumber
           )
           if (clientBlockNumber < 5) {
@@ -90,10 +133,14 @@ class Eth2NearRelay {
             `Got and parsed block ${clientBlockNumber + 1} to block ${endBlock}`
           )
 
-          const txHashes = []
+          // Send all transactions in a single batch, so they are processed in order.
+          const actions = []
           for (let i = clientBlockNumber + 1, j = 0; i <= endBlock; i++, j++) {
-            txHashes.push(await this.submitBlock(blocks[j], i))
+            const action = this.submitBlock(blocks[j], i)
+            actions.push(action)
           }
+
+          const task = this.ethClientContract.account.signAndSendTransaction(this.ethClientContract.contractId, actions)
 
           console.log(
             `Submit txn to add block ${
@@ -101,17 +148,14 @@ class Eth2NearRelay {
             } to block ${endBlock}`
           )
 
-          // Wait add_block txns commit
-          await Promise.all(
-            txHashes.map((txHash) =>
-              txnStatus(this.ethClientContract.account, txHash, 10, 2000)
-            )
-          )
+          await task
+
           console.log(
-            `Success added block ${clientBlockNumber + 1} to block ${endBlock}`
+            `Success added block ${clientBlockNumber + 1} to block ${endBlock}. Chain block number: ${chainBlockNumber}`
           )
         } catch (e) {
-          console.log(e)
+          errorsOnSubmitCounter.inc(1)
+          console.error(e)
         }
       } else {
         await sleep(10000)
@@ -121,21 +165,20 @@ class Eth2NearRelay {
 
   async getParseBlock (blockNumber) {
     try {
+      const block = await this.robustWeb3.getBlock(blockNumber)
       const blockRlp = this.web3.utils.bytesToHex(
-        web3BlockToRlp(await this.robustWeb3.getBlock(blockNumber))
+        web3BlockToRlp(block)
       )
       const unparsedBlock = await ethashproof(
         `${BRIDGE_SRC_DIR}/eth2near/ethashproof/cmd/relayer/relayer ${blockRlp} | sed -e '1,/Json output/d'`
       )
-      // console.log('---')
-      // console.log(unparsedBlock)
       return JSON.parse(unparsedBlock)
     } catch (e) {
-      console.log(`Failed to get or parse block ${blockNumber}: ${e}`)
+      console.error(`Failed to get or parse block ${blockNumber}: ${e}`)
     }
   }
 
-  async submitBlock (block, blockNumber) {
+  submitBlock (block, blockNumber) {
     const h512s = block.elements
       .filter((_, index) => index % 2 === 0)
       .map((element, index) => {
@@ -145,7 +188,7 @@ class Eth2NearRelay {
         )
       })
 
-    const args = {
+    let args = {
       block_header: this.web3.utils.hexToBytes(block.header_rlp),
       dag_nodes: h512s
         .filter((_, index) => index % 2 === 0)
@@ -162,11 +205,8 @@ class Eth2NearRelay {
         })
     }
 
-    console.log(`Submitting block ${blockNumber} to EthClient`)
-    return await this.ethClientContract.add_block_header_async(
-      args,
-      new BN('300000000000000')
-    )
+    args = serialize(borshSchema, 'addBlockHeaderInput', args)
+    return nearAPI.transactions.functionCall('add_block_header', args, this.gasPerTransaction)
   }
 }
 
